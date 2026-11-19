@@ -1,0 +1,94 @@
+# Fase DEPLOY: despliegue por SSH a un servidor Linux de destino.
+# El servidor de destino es un contenedor Linux (Alpine + OpenSSH) que se levanta
+# dentro del runner. El sistema se despliega SOLO desde los paquetes publicados
+# en GitHub Releases, se verifica y se demuestra la recuperación (rollback).
+name: Despliegue SSH del Sistema de Inventario
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/deploy-contenedor.yml'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SSH_OPTS: -i llave -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
+      SERVIDOR: deploy@localhost
+
+    steps:
+      - name: Preparar servidor de destino (Linux + SSH)
+        run: |
+          ssh-keygen -t ed25519 -N "" -f llave -q
+          docker run -d --name servidor-inventario \
+            -e PUBLIC_KEY="$(cat llave.pub)" -e USER_NAME=deploy \
+            -p 2222:2222 lscr.io/linuxserver/openssh-server:latest
+          sleep 15
+          docker exec servidor-inventario apk add --no-cache python3 unzip > /dev/null
+          for i in $(seq 1 20); do ssh $SSH_OPTS $SERVIDOR "echo SSH listo" && break; sleep 3; done
+          ssh $SSH_OPTS $SERVIDOR "cat /etc/os-release | head -2; python3 --version; mkdir -p ~/sistema-inventario && echo Carpeta creada"
+
+      - name: Descargar versión liberada v1.0.0
+        uses: robinraju/release-downloader@v1
+        with:
+          repository: ${{ github.repository }}
+          tag: v1.0.0
+          fileName: sistema-inventario-v1.0.0.zip
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Descargar versión liberada v1.1.0
+        uses: robinraju/release-downloader@v1
+        with:
+          repository: ${{ github.repository }}
+          tag: v1.1.0
+          fileName: sistema-inventario-v1.1.0.zip
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Desplegar v1.0.0 (transferir por SCP e instalar por SSH)
+        run: |
+          scp -P 2222 -i llave -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+            sistema-inventario-v1.0.0.zip $SERVIDOR:~/sistema-inventario/
+          ssh $SSH_OPTS $SERVIDOR '
+            set -e
+            cd ~/sistema-inventario
+            mkdir -p version-v1.0.0
+            unzip -o sistema-inventario-v1.0.0.zip -d version-v1.0.0
+            python3 version-v1.0.0/src/main.py --verificar
+            ln -sfn version-v1.0.0 actual
+            echo "Versión activa: $(readlink actual)"'
+
+      - name: Verificar v1.0.0 (registrar y consultar productos)
+        run: |
+          printf "1\nP002\nMouse\n180\n5\n2\n3\n" | ssh $SSH_OPTS $SERVIDOR "cd ~/sistema-inventario/actual && python3 src/main.py"
+
+      - name: Desplegar nueva versión v1.1.0
+        run: |
+          scp -P 2222 -i llave -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+            sistema-inventario-v1.1.0.zip $SERVIDOR:~/sistema-inventario/
+          ssh $SSH_OPTS $SERVIDOR '
+            set -e
+            cd ~/sistema-inventario
+            mkdir -p version-v1.1.0
+            unzip -o sistema-inventario-v1.1.0.zip -d version-v1.1.0
+            python3 version-v1.1.0/src/main.py --verificar
+            ln -sfn version-v1.1.0 actual
+            echo "Versión activa: $(readlink actual)"
+            ls ~/sistema-inventario'
+
+      - name: Simular problema en v1.1.0 (Buscar producto falla)
+        continue-on-error: true
+        run: |
+          printf "1\nP001\nTeclado\n350\n10\n3\nP001\n" | ssh $SSH_OPTS $SERVIDOR "cd ~/sistema-inventario/actual && python3 src/main.py"
+
+      - name: Recuperar versión anterior (rollback a v1.0.0)
+        run: |
+          ssh $SSH_OPTS $SERVIDOR '
+            cd ~/sistema-inventario
+            ln -sfn version-v1.0.0 actual
+            echo "Versión activa: $(readlink actual)"
+            python3 actual/src/main.py --verificar'
+
+      - name: Verificar sistema tras la recuperación
+        run: |
+          printf "1\nP003\nMonitor\n2500\n3\n2\n3\n" | ssh $SSH_OPTS $SERVIDOR "cd ~/sistema-inventario/actual && python3 src/main.py"
