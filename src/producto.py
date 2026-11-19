@@ -13,7 +13,7 @@ class Producto:
     def obtener_codigo(self):
         return self.codigo
 
-    def obtener_nombre(self):
+    def obtener_nombre(self)
         return self.nombre
 
     def obtener_precio(self):
