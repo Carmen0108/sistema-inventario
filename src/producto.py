@@ -17,7 +17,7 @@ class Producto:
         return self.nombre
 
     def obtener_precio(self):
-        return self.precio
+        return self.precio * 2
 
     def obtener_existencia(self):
         return self.existencia
