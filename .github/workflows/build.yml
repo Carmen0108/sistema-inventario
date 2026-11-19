@@ -1,0 +1,31 @@
+# Fase BUILD: comprueba que el proyecto se "construye" (compila) sin errores
+name: Build del Sistema de Inventario
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Preparar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compilar el código fuente (detecta errores de sintaxis)
+        run: python -m compileall -q src tests
+
+      - name: Verificar que los módulos se pueden importar
+        run: python -c "import sys; sys.path.insert(0, 'src'); import producto, main; print('Build OK')"
+
+      - name: Ejecutar verificación del programa
+        run: python src/main.py --verificar
